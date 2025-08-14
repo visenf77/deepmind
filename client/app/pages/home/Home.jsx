@@ -100,7 +100,7 @@ routes.register(
   "Home",
   routeWithUserSession({
     path: "/",
-    title: "Redash",
+    title: "HRCosmo Analytics",
     render: (pageProps) => <Home {...pageProps} />,
   })
 );
