@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 import React, { useState } from "react";
 import PropTypes from "prop-types";
 import { compact, isEmpty, invoke, map } from "lodash";
@@ -22,14 +23,34 @@ import VisualizationRenderer from "@/components/visualizations/VisualizationRend
 
 import Widget from "./Widget";
 
-function visualizationWidgetMenuOptions({ widget, canEditDashboard, onParametersEdit }) {
+function visualizationWidgetMenuOptions({ widget, dashboard, canEditDashboard, onParametersEdit }) {
   const canViewQuery = currentUser.hasPermission("view_query");
   const canEditParameters = canEditDashboard && !isEmpty(invoke(widget, "query.getParametersDefs"));
   const widgetQueryResult = widget.getQueryResult();
   const isQueryResultEmpty = !widgetQueryResult || !widgetQueryResult.isEmpty || widgetQueryResult.isEmpty();
 
-  const downloadLink = fileType => widgetQueryResult.getLink(widget.getQuery().id, fileType);
-  const downloadName = fileType => widgetQueryResult.getName(widget.getQuery().name, fileType);
+  const downloadLink = (fileType) => {
+    // temporary quick test — not recommended for production
+    const token = "xVqOYfdAULJyreIRs069jYSjqwsKwj6zQZmy7voE";
+
+    const widgetQueryResult = widget.getQueryResult();
+
+    // Prefer query_result id (stable downloadable resource when available)
+    const resultId =
+      widgetQueryResult && (widgetQueryResult.id || (widgetQueryResult.getId && widgetQueryResult.getId()));
+
+    if (resultId) {
+      const url = `/api/query_results/${resultId}.${fileType}`;
+      return token ? `${url}?api_key=${encodeURIComponent(token)}` : url;
+    }
+    
+    const queryId = widget.getQuery().id;
+    const fallback = `/api/queries/${queryId}/results.${fileType}`;
+    return token ? `${fallback}?api_key=${encodeURIComponent(token)}` : fallback;
+  };
+
+  const downloadName = (fileType) => widgetQueryResult.getName(widget.getQuery().name, fileType);
+
   return compact([
     <Menu.Item key="download_csv" disabled={isQueryResultEmpty}>
       {!isQueryResultEmpty ? (
@@ -149,7 +170,7 @@ function VisualizationWidgetFooter({ widget, isPublic, onRefresh, onExpand }) {
   const updatedAt = invoke(widgetQueryResult, "getUpdatedAt");
   const [refreshClickButtonId, setRefreshClickButtonId] = useState();
 
-  const refreshWidget = buttonId => {
+  const refreshWidget = (buttonId) => {
     if (!refreshClickButtonId) {
       setRefreshClickButtonId(buttonId);
       onRefresh().finally(() => setRefreshClickButtonId(null));
@@ -250,7 +271,7 @@ class VisualizationWidget extends React.Component {
     onLoad();
   }
 
-  onLocalFiltersChange = localFilters => {
+  onLocalFiltersChange = (localFilters) => {
     this.setState({ localFilters });
   };
 
@@ -263,7 +284,7 @@ class VisualizationWidget extends React.Component {
     EditParameterMappingsDialog.showModal({
       dashboard,
       widget,
-    }).onClose(valuesChanged => {
+    }).onClose((valuesChanged) => {
       // refresh widget if any parameter value has been updated
       if (valuesChanged) {
         onRefresh();
@@ -317,11 +338,11 @@ class VisualizationWidget extends React.Component {
   }
 
   render() {
-    const { widget, isLoading, isPublic, canEdit, isEditing, onRefresh } = this.props;
+    const { widget, dashboard, isLoading, isPublic, canEdit, isEditing, onRefresh } = this.props;
     const { localParameters } = this.state;
     const widgetQueryResult = widget.getQueryResult();
     const isRefreshing = isLoading && !!(widgetQueryResult && widgetQueryResult.getStatus());
-    const onParametersEdit = parameters => {
+    const onParametersEdit = (parameters) => {
       const paramOrder = map(parameters, "name");
       widget.options.paramOrder = paramOrder;
       widget.save("options", { paramOrder });
@@ -333,6 +354,7 @@ class VisualizationWidget extends React.Component {
         className="widget-visualization"
         menuOptions={visualizationWidgetMenuOptions({
           widget,
+          dashboard,
           canEditDashboard: canEdit,
           onParametersEdit: this.editParameterMappings,
         })}
