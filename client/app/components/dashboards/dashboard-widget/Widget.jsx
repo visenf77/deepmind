@@ -110,7 +110,7 @@ class Widget extends React.Component {
 
   render() {
     const { className, children, header, footer, canEdit, isPublic, menuOptions, tileProps } = this.props;
-    const showDropdownButton = !isPublic && (canEdit || !isEmpty(menuOptions));
+    const showDropdownButton = canEdit || !isEmpty(menuOptions);
     return (
       <div className="widget-wrapper">
         <div className={cx("tile body-container", className)} {...tileProps}>
