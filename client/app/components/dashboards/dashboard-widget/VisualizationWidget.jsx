@@ -22,70 +22,128 @@ import EditParameterMappingsDialog from "@/components/dashboards/EditParameterMa
 import VisualizationRenderer from "@/components/visualizations/VisualizationRenderer";
 
 import Widget from "./Widget";
+import * as XLSX from "xlsx";
 
-function visualizationWidgetMenuOptions({ widget, dashboard, canEditDashboard, onParametersEdit }) {
-  const canViewQuery = currentUser.hasPermission("view_query");
-  const canEditParameters = canEditDashboard && !isEmpty(invoke(widget, "query.getParametersDefs"));
-  const widgetQueryResult = widget.getQueryResult();
-  const isQueryResultEmpty = !widgetQueryResult || !widgetQueryResult.isEmpty || widgetQueryResult.isEmpty();
+// Normalize result shape
+function getRawResult(widgetQueryResult) {
+  if (widgetQueryResult.query_result?.data) {
+    return widgetQueryResult.query_result.data;
+  }
+  return widgetQueryResult.data || { columns: [], rows: [] };
+}
 
-  const downloadLink = (fileType) => {
-    // temporary quick test — not recommended for production
-    const token = "xVqOYfdAULJyreIRs069jYSjqwsKwj6zQZmy7voE";
+// Serialize rows+columns to delimiter-separated text
+function serialize(rows, columns, delimiter = ",") {
+  const header = columns.map(col => col.name).join(delimiter);
+  const body = rows
+    .map(row =>
+      columns
+        .map(col => {
+          const val = row[col.name] == null ? "" : String(row[col.name]);
+          if (/[,"\n]/.test(val)) {
+            return `"${val.replace(/"/g, '""')}"`;
+          }
+          return val;
+        })
+        .join(delimiter)
+    )
+    .join("\n");
+  return `${header}\n${body}`;
+}
 
-    const widgetQueryResult = widget.getQueryResult();
+// Download in-memory data as CSV, TSV, or XLSX
+function downloadData(widget, fileType) {
+  const wqr = widget.getQueryResult();
+  const { columns, rows } = getRawResult(wqr);
+  let content, mime, ext;
 
-    // Prefer query_result id (stable downloadable resource when available)
-    const resultId =
-      widgetQueryResult && (widgetQueryResult.id || (widgetQueryResult.getId && widgetQueryResult.getId()));
+  switch (fileType) {
+    case "csv":
+      content = serialize(rows, columns, ",");
+      mime    = "text/csv";
+      ext     = "csv";
+      break;
+    case "tsv":
+      content = serialize(rows, columns, "\t");
+      mime    = "text/tab-separated-values";
+      ext     = "tsv";
+      break;
+    case "xlsx":
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(rows, {
+        header: columns.map(c => c.name),
+      });
+      XLSX.utils.book_append_sheet(wb, ws, "Results");
+      return XLSX.writeFile(
+        wb,
+        wqr.getName(widget.getQuery().name, "xlsx"),
+        { bookType: "xlsx" }
+      );
+    default:
+      return;
+  }
 
-    if (resultId) {
-      const url = `/api/query_results/${resultId}.${fileType}`;
-      return token ? `${url}?api_key=${encodeURIComponent(token)}` : url;
-    }
-    
-    const queryId = widget.getQuery().id;
-    const fallback = `/api/queries/${queryId}/results.${fileType}`;
-    return token ? `${fallback}?api_key=${encodeURIComponent(token)}` : fallback;
-  };
+  const blob     = new Blob([content], { type: mime });
+  const url      = URL.createObjectURL(blob);
+  const fileName = wqr.getName(widget.getQuery().name, ext);
+  const anchor   = document.createElement("a");
 
-  const downloadName = (fileType) => widgetQueryResult.getName(widget.getQuery().name, fileType);
+  anchor.href     = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
+}
+
+export function visualizationWidgetMenuOptions({
+  widget,
+  dashboard,
+  canEditDashboard,
+  onParametersEdit,
+}) {
+  const currentWqr      = widget.getQueryResult();
+  const isEmptyResult   = !currentWqr || currentWqr.isEmpty?.();
+  const canViewQuery    = currentUser.hasPermission("view_query");
+  const hasParams       = !isEmpty(invoke(widget, "query.getParametersDefs"));
+  const canEditParams   = canEditDashboard && hasParams;
 
   return compact([
-    <Menu.Item key="download_csv" disabled={isQueryResultEmpty}>
-      {!isQueryResultEmpty ? (
-        <Link href={downloadLink("csv")} download={downloadName("csv")} target="_self">
-          Download as CSV File
-        </Link>
-      ) : (
-        "Download as CSV File"
-      )}
+    <Menu.Item
+      key="download_csv"
+      disabled={isEmptyResult}
+      onClick={() => downloadData(widget, "csv")}
+    >
+      Download as CSV File
     </Menu.Item>,
-    <Menu.Item key="download_tsv" disabled={isQueryResultEmpty}>
-      {!isQueryResultEmpty ? (
-        <Link href={downloadLink("tsv")} download={downloadName("tsv")} target="_self">
-          Download as TSV File
-        </Link>
-      ) : (
-        "Download as TSV File"
-      )}
+
+    <Menu.Item
+      key="download_tsv"
+      disabled={isEmptyResult}
+      onClick={() => downloadData(widget, "tsv")}
+    >
+      Download as TSV File
     </Menu.Item>,
-    <Menu.Item key="download_excel" disabled={isQueryResultEmpty}>
-      {!isQueryResultEmpty ? (
-        <Link href={downloadLink("xlsx")} download={downloadName("xlsx")} target="_self">
-          Download as Excel File
-        </Link>
-      ) : (
-        "Download as Excel File"
-      )}
+
+    <Menu.Item
+      key="download_excel"
+      disabled={isEmptyResult}
+      onClick={() => downloadData(widget, "xlsx")}
+    >
+      Download as Excel File
     </Menu.Item>,
-    (canViewQuery || canEditParameters) && <Menu.Divider key="divider" />,
+
+    (canViewQuery || canEditParams) && <Menu.Divider key="divider" />,
+
     canViewQuery && (
       <Menu.Item key="view_query">
-        <Link href={widget.getQuery().getUrl(true, widget.visualization.id)}>View Query</Link>
+        <a href={widget.getQuery().getUrl(true, widget.visualization.id)}>
+          View Query
+        </a>
       </Menu.Item>
     ),
-    canEditParameters && (
+
+    canEditParams && (
       <Menu.Item key="edit_parameters" onClick={onParametersEdit}>
         Edit Parameters
       </Menu.Item>
