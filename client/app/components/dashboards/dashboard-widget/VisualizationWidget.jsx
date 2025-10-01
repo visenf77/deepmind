@@ -24,6 +24,7 @@ import VisualizationRenderer from "@/components/visualizations/VisualizationRend
 import Widget from "./Widget";
 import * as XLSX from "xlsx";
 
+//-----------------------here is xlsx code-----------------------
 // Normalize result shape
 function getRawResult(widgetQueryResult) {
   if (widgetQueryResult.query_result?.data) {
@@ -95,6 +96,7 @@ function downloadData(widget, fileType) {
   document.body.removeChild(anchor);
   URL.revokeObjectURL(url);
 }
+//-----------------------END OF XLSX CODE-----------------------
 
 export function visualizationWidgetMenuOptions({
   widget,
