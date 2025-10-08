@@ -14,6 +14,7 @@ export const FilterType = PropTypes.shape({
   multiple: PropTypes.bool,
   current: PropTypes.oneOfType([PropTypes.any, PropTypes.arrayOf(PropTypes.any)]),
   values: PropTypes.arrayOf(PropTypes.any).isRequired,
+  static: PropTypes.bool,
 });
 
 export const FiltersType = PropTypes.arrayOf(FilterType);
@@ -87,7 +88,14 @@ function Filters({ filters, onChange }) {
                 key={filter.name}
                 className="col-sm-6 p-l-0 filter-container"
                 data-test={`FilterName-${filter.name}`}>
-                <label>{filter.friendlyName}</label>
+                <label>
+                  {filter.friendlyName}
+                  {filter.static && (
+                    <span className="text-muted m-l-5" title="This filter is automatically set and cannot be changed">
+                      <i className="fa fa-lock" aria-hidden="true" />
+                    </span>
+                  )}
+                </label>
                 {options.length === 0 && <Select className="w-100" disabled value="No values" />}
                 {options.length > 0 && (
                   <Select
@@ -102,13 +110,14 @@ function Filters({ filters, onChange }) {
                           }))
                         : { key: `${indexOf(filter.values, filter.current)}`, label: formatColumnValue(filter.current) }
                     }
-                    allowClear={filter.multiple}
+                    allowClear={filter.multiple && !filter.static}
                     optionFilterProp="children"
                     showSearch
                     maxTagCount={3}
                     maxTagTextLength={10}
                     maxTagPlaceholder={num => `+${num.length} more`}
-                    onChange={values => onChange(filter, values)}>
+                    disabled={filter.static}
+                    onChange={values => !filter.static && onChange(filter, values)}>
                     {!filter.multiple && options}
                     {filter.multiple && [
                       <Select.Option key={NONE_VALUES} data-test="ClearOption">
