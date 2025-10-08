@@ -36,6 +36,7 @@ def embed(query_id, visualization_id, org_slug=None):
     return render_index()
 
 
+# Route for public URL with GUID (token) for dashboards
 @routes.route(org_scoped_rule("/public/dashboards/<token>"), methods=["GET"])
 @login_required
 @csp_allows_embeding
