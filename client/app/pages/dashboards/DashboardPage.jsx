@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 import { isEmpty, map } from "lodash";
 import React, { useState, useEffect } from "react";
 import PropTypes from "prop-types";
@@ -90,7 +91,7 @@ function DashboardComponent(props) {
 
   const [pageContainer, setPageContainer] = useState(null);
   const [bottomPanelStyles, setBottomPanelStyles] = useState({});
-  const onParametersEdit = parameters => {
+  const onParametersEdit = (parameters) => {
     const paramOrder = map(parameters, "name");
     updateDashboard({ options: { globalParamOrder: paramOrder } });
   };
@@ -172,10 +173,11 @@ DashboardComponent.propTypes = {
 function DashboardPage({ dashboardSlug, dashboardId, onError }) {
   const [dashboard, setDashboard] = useState(null);
   const handleError = useImmutableCallback(onError);
+  console.log({ dashboardSlug, dashboardId });
 
   useEffect(() => {
     Dashboard.get({ id: dashboardId, slug: dashboardSlug })
-      .then(dashboardData => {
+      .then((dashboardData) => {
         recordEvent("view", "dashboard", dashboardData.id);
         setDashboard(dashboardData);
 
@@ -186,6 +188,7 @@ function DashboardPage({ dashboardSlug, dashboardId, onError }) {
       })
       .catch(handleError);
   }, [dashboardId, dashboardSlug, handleError]);
+  console.log({ dashboard });
 
   return <div className="dashboard-page">{dashboard && <DashboardComponent dashboard={dashboard} />}</div>;
 }
@@ -207,7 +210,7 @@ routes.register(
   "Dashboards.LegacyViewOrEdit",
   routeWithUserSession({
     path: "/dashboard/:dashboardSlug",
-    render: pageProps => <DashboardPage {...pageProps} />,
+    render: (pageProps) => <DashboardPage {...pageProps} />,
   })
 );
 
@@ -215,6 +218,6 @@ routes.register(
   "Dashboards.ViewOrEdit",
   routeWithUserSession({
     path: "/dashboards/:dashboardId([^-]+)(-.*)?",
-    render: pageProps => <DashboardPage {...pageProps} />,
+    render: (pageProps) => <DashboardPage {...pageProps} />,
   })
 );

@@ -60,3 +60,29 @@ def public_dashboard(token, org_slug=None):
         },
     )
     return render_index()
+
+    
+@routes.route(org_scoped_rule("/public/dashboards/<token>/company/<company_guid>"), methods=["GET"])
+@login_required
+@csp_allows_embeding
+def public_dashboard_with_company(token, company_guid, org_slug=None):
+    if current_user.is_api_user():
+        dashboard = current_user.object
+    else:
+        api_key = get_object_or_404(models.ApiKey.get_by_api_key, token)
+        dashboard = api_key.object
+
+    record_event(
+        current_org,
+        current_user,
+        {
+            "action": "view",
+            "object_id": dashboard.id,
+            "object_type": "dashboard",
+            "public": True,
+            "company_guid": company_guid,
+            "headless": "embed" in request.args,
+            "referer": request.headers.get("Referer"),
+        },
+    )
+    return render_index()
