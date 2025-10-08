@@ -1,3 +1,16 @@
+/* eslint-disable no-console */
+/**
+ * PublicDashboardPage Component
+ * 
+ * Supports two URL patterns:
+ * 1. /public/dashboards/:token - Standard public dashboard
+ * 2. /public/dashboards/:token/company/:companyGuid - Public dashboard with company filtering
+ * 
+ * When companyGuid is provided (format: E_*), the component:
+ * 1. Passes the companyGuid as a filter prop to the dashboard
+ * 2. The dashboard queries can use the companyGuid filter directly in their WHERE clauses
+ * 3. Displays the dashboard with the company filter applied
+ */
 import { isEmpty } from "lodash";
 import React from "react";
 import PropTypes from "prop-types";
@@ -19,10 +32,13 @@ import useDashboard from "./hooks/useDashboard";
 
 import "./PublicDashboardPage.less";
 
-function PublicDashboard({ dashboard }) {
-  const { globalParameters, filters, setFilters, refreshDashboard, loadWidget, refreshWidget } = useDashboard(
-    dashboard
+function PublicDashboard({ dashboard, companyGuid }) {
+  const { globalParameters, filters, setFilters, refreshDashboard, loadWidget, refreshWidget, visibleWidgets } = useDashboard(
+    dashboard,
+    companyGuid
   );
+  
+  
 
   return (
     <div className="container p-t-10 p-b-20">
@@ -40,7 +56,7 @@ function PublicDashboard({ dashboard }) {
       <div id="dashboard-container">
         <DashboardGrid
           dashboard={dashboard}
-          widgets={dashboard.widgets}
+          widgets={visibleWidgets}
           filters={filters}
           isEditing={false}
           isPublic
@@ -54,15 +70,18 @@ function PublicDashboard({ dashboard }) {
 
 PublicDashboard.propTypes = {
   dashboard: PropTypes.object.isRequired, // eslint-disable-line react/forbid-prop-types
+  companyGuid: PropTypes.string,
 };
 
 class PublicDashboardPage extends React.Component {
   static propTypes = {
     token: PropTypes.string.isRequired,
+    companyGuid: PropTypes.string,
     onError: PropTypes.func,
   };
 
   static defaultProps = {
+    companyGuid: null,
     onError: () => {},
   };
 
@@ -71,11 +90,27 @@ class PublicDashboardPage extends React.Component {
     dashboard: null,
   };
 
-  componentDidMount() {
-    Dashboard.getByToken({ token: this.props.token })
-      .then(dashboard => this.setState({ dashboard, loading: false }))
-      .catch(error => this.props.onError(error));
+
+  async componentDidMount() {
+    // Log the token
+    // eslint-disable-next-line no-console
+    console.log("PublicDashboardPage: token =", this.props.token);
+    // eslint-disable-next-line no-console
+    console.log("PublicDashboardPage: companyGuid =", this.props.companyGuid);
+
+    try {
+      const dashboard = await Dashboard.getByToken({ token: this.props.token });
+      
+      // Log the dashboard object
+      // eslint-disable-next-line no-console
+      console.log("PublicDashboardPage: dashboard =", dashboard);
+
+      this.setState({ dashboard, loading: false });
+    } catch (error) {
+      this.props.onError(error);
+    }
   }
+  
 
   render() {
     const { loading, dashboard } = this.state;
@@ -86,7 +121,7 @@ class PublicDashboardPage extends React.Component {
             <BigMessage className="" icon="fa-spinner fa-2x fa-pulse" message="Loading..." />
           </div>
         ) : (
-          <PublicDashboard dashboard={dashboard} />
+          <PublicDashboard dashboard={dashboard} companyGuid={this.props.companyGuid} />
         )}
       </div>
     );
@@ -97,6 +132,15 @@ routes.register(
   "Dashboards.ViewShared",
   routeWithApiKeySession({
     path: "/public/dashboards/:token",
+    render: pageProps => <PublicDashboardPage {...pageProps} />,
+    getApiKey: currentRoute => currentRoute.routeParams.token,
+  })
+);
+
+routes.register(
+  "Dashboards.ViewPublicWithCompany",
+  routeWithApiKeySession({
+    path: "/public/dashboards/:token/company/:companyGuid",
     render: pageProps => <PublicDashboardPage {...pageProps} />,
     getApiKey: currentRoute => currentRoute.routeParams.token,
   })
