@@ -75,6 +75,8 @@ from redash.handlers.query_results import (
     QueryResultDropdownResource,
     QueryResultListResource,
     QueryResultResource,
+    dependentQueryDropdownsResource,
+    DependentQueryResultDropdownResource,
 )
 from redash.handlers.query_snippets import (
     QuerySnippetListResource,
@@ -232,10 +234,34 @@ api.add_org_resource(
     endpoint="query_result_dropdown",
 )
 api.add_org_resource(
+    DependentQueryResultDropdownResource,
+    "/api/queries/<query_id>/dropdown/parameters/<parameters>",
+    endpoint="dependent_query_result_dropdown",
+)
+api.add_org_resource(
     QueryDropdownsResource,
     "/api/queries/<query_id>/dropdowns/<dropdown_query_id>",
     endpoint="query_result_dropdowns",
 )
+api.add_org_resource(
+    dependentQueryDropdownsResource,
+    "/api/queries/<query_id>/dropdowns/<dropdown_query_id>/parameters/<parameters>",
+    endpoint="dependent_query_result_dropdowns",
+)
+
+api.add_org_resource(
+    DependentQueryResultDropdownResource,
+    "/api/public/queries/<query_id>/dropdown/parameters/<parameters>",
+    endpoint="public_dependent_query_result_dropdown",
+)
+
+api.add_org_resource(
+    dependentQueryDropdownsResource,
+    "/api/public/queries/<query_id>/dropdowns/<dropdown_query_id>/parameters/<parameters>",
+    endpoint="public_dependent_query_dropdowns",
+)
+
+
 api.add_org_resource(
     QueryResultResource,
     "/api/query_results/<query_result_id>.<filetype>",

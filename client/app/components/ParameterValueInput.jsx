@@ -7,6 +7,8 @@ import InputNumber from "antd/lib/input-number";
 import DateParameter from "@/components/dynamic-parameters/DateParameter";
 import DateRangeParameter from "@/components/dynamic-parameters/DateRangeParameter";
 import QueryBasedParameterInput from "./QueryBasedParameterInput";
+import DependentQueryBasedParameterInput from "./DependentQueryBasedParameterInput";
+
 
 import "./ParameterValueInput.less";
 import Tooltip from "./Tooltip";
@@ -27,6 +29,7 @@ class ParameterValueInput extends React.Component {
     onSelect: PropTypes.func,
     className: PropTypes.string,
     regex: PropTypes.string,
+    queryOptionValues: PropTypes.array,
   };
 
   static defaultProps = {
@@ -38,6 +41,7 @@ class ParameterValueInput extends React.Component {
     onSelect: () => {},
     className: "",
     regex: "",
+    queryOptionValues: [],
   };
 
   constructor(props) {
@@ -45,16 +49,26 @@ class ParameterValueInput extends React.Component {
     this.state = {
       value: props.parameter.hasPendingValue ? props.parameter.pendingValue : props.value,
       isDirty: props.parameter.hasPendingValue,
+      prevQueryOptionValues: props.queryOptionValues ?? []
     };
   }
 
   componentDidUpdate = (prevProps) => {
-    const { value, parameter } = this.props;
+    const {type, value, parameter, queryOptionValues } = this.props;
     // if value prop updated, reset dirty state
     if (prevProps.value !== value || prevProps.parameter !== parameter) {
       this.setState({
         value: parameter.hasPendingValue ? parameter.pendingValue : value,
         isDirty: parameter.hasPendingValue,
+      });
+    }
+    // If queryOptionValues prop updated, update the value state for QueryBasedParameterInput to show latest dropdown value
+    if (type === "dependent-filters" && !isEqual(prevProps.queryOptionValues, queryOptionValues)) {
+      // This is a simple way to "refresh" the value in QueryBasedParameterInput
+      // It will reset to current prop.value (or pendingValue) when options change
+      this.setState({
+        value: parameter && parameter.hasPendingValue ? parameter.pendingValue : value,
+        prevQueryOptionValues: queryOptionValues,
       });
     }
   };
@@ -115,12 +129,33 @@ class ParameterValueInput extends React.Component {
     );
   }
 
-  renderQueryBasedInput() {
+   renderQueryBasedInput() {
     const { queryId, parameter } = this.props;
     const { value } = this.state;
     return (
       <QueryBasedParameterInput
         className={this.props.className}
+        mode={parameter.multiValuesOptions ? "multiple" : "default"}
+        parameter={parameter}
+        value={value}
+        queryId={queryId}
+        onSelect={this.onSelect}
+        style={{ minWidth: 60 }}
+        {...multipleValuesProps}
+      />
+    );
+  }
+
+
+  renderDependentQueryBasedInput() {
+    const { queryId, parameter, queryOptionValues } = this.props;
+    const { value } = this.state;
+    // console.log({value,parameter,queryOptionValues});
+
+    return (
+      <DependentQueryBasedParameterInput
+        className={this.props.className}
+        queryOptionValues={queryOptionValues}
         mode={parameter.multiValuesOptions ? "multiple" : "default"}
         parameter={parameter}
         value={value}
@@ -196,6 +231,8 @@ class ParameterValueInput extends React.Component {
         return this.renderEnumInput();
       case "query":
         return this.renderQueryBasedInput();
+      case "dependent-filters":
+        return this.renderDependentQueryBasedInput();
       case "number":
         return this.renderNumberInput();
       case "text-pattern":

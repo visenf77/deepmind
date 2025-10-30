@@ -6,6 +6,7 @@ import QueryBasedDropdownParameter from "./QueryBasedDropdownParameter";
 import DateParameter from "./DateParameter";
 import DateRangeParameter from "./DateRangeParameter";
 import TextPatternParameter from "./TextPatternParameter";
+import DependentBasedDropdownParameter from "./DependentBasedDropdownParameter";
 
 function createParameter(param, parentQueryId) {
   switch (param.type) {
@@ -15,6 +16,8 @@ function createParameter(param, parentQueryId) {
       return new EnumParameter(param, parentQueryId);
     case "query":
       return new QueryBasedDropdownParameter(param, parentQueryId);
+    case "dependent-filters":
+      return new DependentBasedDropdownParameter(param, parentQueryId);
     case "date":
     case "datetime-local":
     case "datetime-with-seconds":

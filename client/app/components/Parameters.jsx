@@ -1,4 +1,5 @@
-import { size, filter, forEach, extend, isEmpty } from "lodash";
+/* eslint-disable no-console */
+import { size, filter, forEach, extend, isEmpty, isEqual } from "lodash";
 import React from "react";
 import PropTypes from "prop-types";
 import { SortableContainer, SortableElement, DragHandle } from "@redash/viz/lib/components/sortable";
@@ -30,6 +31,7 @@ export default class Parameters extends React.Component {
     onPendingValuesChange: PropTypes.func,
     onParametersEdit: PropTypes.func,
     appendSortableToParent: PropTypes.bool,
+    // queryParamValues is intentionally not included in props
   };
 
   static defaultProps = {
@@ -37,10 +39,11 @@ export default class Parameters extends React.Component {
     editable: false,
     sortable: false,
     disableUrlUpdate: false,
-    onValuesChange: () => {},
-    onPendingValuesChange: () => {},
-    onParametersEdit: () => {},
+    onValuesChange: () => { },
+    onPendingValuesChange: () => { },
+    onParametersEdit: () => { },
     appendSortableToParent: true,
+    // no queryParamValues in defaultProps
   };
 
   toCamelCase = (str) => {
@@ -53,7 +56,10 @@ export default class Parameters extends React.Component {
   constructor(props) {
     super(props);
     const { parameters, disableUrlUpdate } = props;
-    this.state = { parameters };
+    this.state = {
+      parameters,
+      queryParamValues: {},
+    };
     if (!disableUrlUpdate) {
       updateUrl(parameters);
     }
@@ -66,33 +72,114 @@ export default class Parameters extends React.Component {
     const { parameters, disableUrlUpdate } = this.props;
     const parametersChanged = prevProps.parameters !== parameters;
     const disableUrlUpdateChanged = prevProps.disableUrlUpdate !== disableUrlUpdate;
-    if (parametersChanged) {
+
+    if (parametersChanged && parameters !== this.state.parameters) {
       this.setState({ parameters });
     }
     if ((parametersChanged || disableUrlUpdateChanged) && !disableUrlUpdate) {
       updateUrl(parameters);
     }
+   
   };
 
   handleKeyDown = (e) => {
-    // Cmd/Ctrl/Alt + Enter
     if (e.keyCode === 13 && (e.ctrlKey || e.metaKey || e.altKey)) {
       e.stopPropagation();
       this.applyChanges();
     }
   };
 
-  setPendingValue = (param, value, isDirty) => {
+  // Optimized updateDescendantValue: updates children when parent is updated, with less logging and better async handling
+
+  updateDescendantValue = async (param, updatedQueryParamValues, updatedParameters, parentValue, parentName) => {
+    if (!Array.isArray(param.parent_parameter)) return;
+
+    // Update the correct parent_parameter value for this param
+    param.parent_parameter = param.parent_parameter.map(pp =>
+      pp && pp.name === parentName ? { ...pp, value: parentValue } : pp
+    );
+
+    const name = param.name;
+    const paramOptions = await param.loadDropdownValues();
+
+    updatedQueryParamValues[name] = paramOptions || [];
+
+    let newValue = null;
+    if (Array.isArray(paramOptions) && paramOptions.length > 0) {
+      newValue = paramOptions[0].value !== undefined ? paramOptions[0].value : paramOptions[0];
+      param.setPendingValue(newValue !== undefined ? newValue : null);
+    } else {
+      param.setPendingValue(null);
+    }
+
+    // Sync param updates in the parameters array
+    updatedParameters = updatedParameters.map(up =>
+      up && up.name === name ? { ...param } : up
+    );
+
+    // Find children that depend on this param
+    const childParameters = Array.isArray(updatedParameters)
+      ? updatedParameters.filter(child =>
+          Array.isArray(child.parent_parameter) &&
+          child.parent_parameter.some(pp => pp && pp.name === name)
+        )
+      : [];
+
+    // Recursively update children, immediately async/await for sequential updates
+    for (const childParam of childParameters) {
+      await this.updateDescendantValue(
+        childParam,
+        updatedQueryParamValues,
+        updatedParameters,
+        newValue,
+        name
+      );
+    }
+  }
+
+  setPendingValue = async (param, value, isDirty) => {
     const { onPendingValuesChange } = this.props;
-    this.setState(({ parameters }) => {
-      if (isDirty) {
-        param.setPendingValue(value);
-      } else {
-        param.clearPendingValue();
+    const { parameters, queryParamValues } = this.state;
+   
+
+    if (isDirty) {
+      param.setPendingValue(value);
+    } else {
+      param.clearPendingValue();
+    }
+
+    let updatedQueryParamValues = { ...queryParamValues };
+    let updatedParameters = [...parameters];
+
+    // Find direct children of this param and update them
+    const childParameters = Array.isArray(parameters)
+      ? parameters.filter(
+          child =>
+            Array.isArray(child.parent_parameter) &&
+            child.parent_parameter.some(pp => pp && pp.name === param.name)
+        )
+      : [];
+
+    if (childParameters.length > 0) {
+      // For each direct child, update it and its descendants sequentially
+      for (const childParam of childParameters) {
+        await this.updateDescendantValue(
+          childParam,
+          updatedQueryParamValues,
+          updatedParameters,
+          value,
+          param.name
+        );
       }
-      onPendingValuesChange();
-      return { parameters };
-    });
+    }
+
+    this.setState(
+      {
+        parameters: updatedParameters,
+        queryParamValues: updatedQueryParamValues,
+      },
+      onPendingValuesChange
+    );
   };
 
   moveParameter = ({ oldIndex, newIndex }) => {
@@ -120,10 +207,14 @@ export default class Parameters extends React.Component {
   };
 
   showParameterSettings = (parameter, index) => {
+    const { parameters } = this.state;
     const { onParametersEdit } = this.props;
-    EditParameterSettingsDialog.showModal({ parameter }).onClose((updated) => {
+    console.log({ parameter, parameters });
+
+    EditParameterSettingsDialog.showModal({ parameter, parameters }).onClose((updated) => {
       this.setState(({ parameters }) => {
         const updatedParameter = extend(parameter, updated);
+        console.log({ updatedParameter });
         parameters[index] = createParameter(updatedParameter, updatedParameter.parentQueryId);
         onParametersEdit(parameters);
         return { parameters };
@@ -136,9 +227,21 @@ export default class Parameters extends React.Component {
       return null;
     }
     const { editable } = this.props;
+    const { queryParamValues } = this.state;
     if (param.hidden) {
       return null;
     }
+
+    // Determine queryOptionValues: send only if queryParamValues has property param.name, otherwise send as null
+    let queryOptionValues = null;
+    if (
+      param.type === "dependent-filters" &&
+      queryParamValues &&
+      Object.prototype.hasOwnProperty.call(queryParamValues, param.name)
+    ) {
+      queryOptionValues = queryParamValues[param.name];
+    }
+
     return (
       <div key={param.name} className="di-block" data-test={`ParameterName-${param.name}`}>
         <div className="parameter-heading">
@@ -149,8 +252,7 @@ export default class Parameters extends React.Component {
               aria-label="Edit"
               onClick={() => this.showParameterSettings(param, index)}
               data-test={`ParameterSettings-${param.name}`}
-              type="button"
-            >
+              type="button">
               <i className="fa fa-cog" aria-hidden="true" />
             </PlainButton>
           )}
@@ -159,10 +261,11 @@ export default class Parameters extends React.Component {
         <ParameterValueInput
           type={param.type}
           value={param.normalizedValue}
+          queryOptionValues={queryOptionValues}
           parameter={param}
           enumOptions={param.enumOptions}
           queryId={param.queryId}
-          onSelect={(value, isDirty) => this.setPendingValue(param, value, isDirty)}
+          onSelect={(v, isDirty) => this.setPendingValue(param, v, isDirty)}
           regex={param.regex}
         />
       </div>
