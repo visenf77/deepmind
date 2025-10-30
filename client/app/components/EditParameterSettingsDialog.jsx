@@ -1,4 +1,5 @@
-import { includes, words, capitalize, clone, isNull } from "lodash";
+/* eslint-disable no-console */
+import { includes, words, capitalize, clone, isNull, isArray } from "lodash";
 import React, { useState, useEffect } from "react";
 import PropTypes from "prop-types";
 import Checkbox from "antd/lib/checkbox";
@@ -101,6 +102,18 @@ function EditParameterSettingsDialog(props) {
       return false;
     }
 
+    // dependent-filters: must select parent_parameter
+    // parent_parameter must be a non-empty array if present
+    if (
+      param.type === "dependent-filters" &&
+      (!param.parent_parameter ||
+        !Array.isArray(param.parent_parameter) ||
+        param.parent_parameter.length === 0) &&
+      !param.queryId
+    ) {
+      return false;
+    }
+
     return true;
   }
 
@@ -128,6 +141,43 @@ function EditParameterSettingsDialog(props) {
     }
   };
 
+  // For dependent-filters: Build list of available parameter names to select as parent
+  // Exclude current parameter (if named and not new)
+  const availableParentParameters =
+    props.parameters && Array.isArray(props.parameters)
+      ? props.parameters
+          .filter(
+            (p) => p.name && (!param.name || p.name !== param.name) // exclude self
+          )
+          .map((p) => p.name)
+      : [];
+
+  // Helper: get default value for a parameter to be used for parent_parameter_value
+  function getParameterDefaultValueByName(paramName) {
+    if (!paramName || !props.parameters || !Array.isArray(props.parameters)) return undefined;
+    const foundParam = props.parameters.find((p) => p.name === paramName);
+    // Try to get the .value field, fallback to undefined if not present
+    return foundParam ? foundParam.value : undefined;
+  }
+
+  // Helper: for dependent-filters value, get parent_parameter as [{ name, value }]
+  // Value in the Select will be name array,
+  // but in param.parent_parameter we store [{name,value}, ...]
+  // Accepts possible legacy string/array or [{name,value}]
+  function getSelectedParentNames(parent_parameter) {
+    if (!parent_parameter) return [];
+    if (typeof parent_parameter === "string") return [parent_parameter];
+    if (Array.isArray(parent_parameter)) {
+      // Case where parent_parameter: [string] or [{ name, value }]
+      if (parent_parameter.length === 0) return [];
+      if (typeof parent_parameter[0] === "string") return parent_parameter;
+      if (typeof parent_parameter[0] === "object" && parent_parameter[0].name) {
+        return parent_parameter.map((o) => o.name);
+      }
+    }
+    return [];
+  }
+
   return (
     <Modal
       {...props.dialog.props}
@@ -143,12 +193,10 @@ function EditParameterSettingsDialog(props) {
           disabled={!isFulfilled()}
           type="primary"
           form={paramFormId}
-          data-test="SaveParameterSettings"
-        >
+          data-test="SaveParameterSettings">
           {isNew ? "Add Parameter" : "OK"}
         </Button>,
-      ]}
-    >
+      ]}>
       <Form layout="horizontal" onFinish={onConfirm} id={paramFormId}>
         {isNew && (
           <NameInput
@@ -177,6 +225,7 @@ function EditParameterSettingsDialog(props) {
             </Option>
             <Option value="enum">Dropdown List</Option>
             <Option value="query">Query Based Dropdown List</Option>
+            <Option value="dependent-filters">Filters dependent Based Dropdown List</Option>
             <Option disabled key="dv1">
               <Divider className="select-option-divider" />
             </Option>
@@ -201,8 +250,7 @@ function EditParameterSettingsDialog(props) {
           <Form.Item
             label="Regex"
             help={!isValidRegex ? "Invalid Regex Pattern" : "Valid Regex Pattern"}
-            {...formItemProps}
-          >
+            {...formItemProps}>
             <Input
               value={userInput}
               onChange={handleRegexChange}
@@ -220,13 +268,45 @@ function EditParameterSettingsDialog(props) {
             />
           </Form.Item>
         )}
-        {param.type === "query" && (
+        {(param.type === "query" || param.type === "dependent-filters") && (
           <Form.Item label="Query" help="Select query to load dropdown values from" {...formItemProps}>
             <QuerySelector
               selectedQuery={initialQuery}
               onChange={(q) => setParam({ ...param, queryId: q && q.id })}
               type="select"
             />
+          </Form.Item>
+        )}
+        {param.type === "dependent-filters" && (
+          <Form.Item
+            label="Parent Parameter"
+            help="Select parameter(s) on which this one should depend"
+            {...formItemProps}>
+            <Select
+              mode="multiple"
+              value={getSelectedParentNames(param.parent_parameter)}
+              onChange={(selectedNames) => {
+                // For each selected name, lookup value
+                const paramObjs = selectedNames.map((parentName) => ({
+                  name: parentName,
+                  value: getParameterDefaultValueByName(parentName),
+                }));
+                console.log({selectedNames, paramObjs});
+                setParam({
+                  ...param,
+                  parent_parameter: paramObjs,
+                  // Optional: Keep a flat array of parent values for backwards compat if needed
+                  parent_parameter_value: paramObjs.map(obj => obj.value),
+                });
+              }}
+              placeholder="Choose parent parameter(s)"
+              data-test="ParentParameterSelect">
+              {availableParentParameters.map((name) => (
+                <Option key={name} value={name}>
+                  {name}
+                </Option>
+              ))}
+            </Select>
           </Form.Item>
         )}
         {(param.type === "enum" || param.type === "query") && (
@@ -245,8 +325,7 @@ function EditParameterSettingsDialog(props) {
                     : null,
                 })
               }
-              data-test="AllowMultipleValuesCheckbox"
-            >
+              data-test="AllowMultipleValuesCheckbox">
               Allow multiple values
             </Checkbox>
           </Form.Item>
@@ -259,8 +338,7 @@ function EditParameterSettingsDialog(props) {
                 Placed in query as: <code>{joinExampleList(param.multiValuesOptions)}</code>
               </React.Fragment>
             }
-            {...formItemProps}
-          >
+            {...formItemProps}>
             <Select
               value={param.multiValuesOptions.prefix}
               onChange={(quoteOption) =>
@@ -273,8 +351,7 @@ function EditParameterSettingsDialog(props) {
                   },
                 })
               }
-              data-test="QuotationSelect"
-            >
+              data-test="QuotationSelect">
               <Option value="">None (default)</Option>
               <Option value="'">Single Quotation Mark</Option>
               <Option value={'"'} data-test="DoubleQuotationMarkOption">
@@ -292,10 +369,12 @@ EditParameterSettingsDialog.propTypes = {
   parameter: PropTypes.object.isRequired, // eslint-disable-line react/forbid-prop-types
   dialog: DialogPropType.isRequired,
   existingParams: PropTypes.arrayOf(PropTypes.string),
+  parameters: PropTypes.array, // accepts parameters list for dependent-filters
 };
 
 EditParameterSettingsDialog.defaultProps = {
   existingParams: [],
+  parameters: [],
 };
 
 export default wrapDialog(EditParameterSettingsDialog);

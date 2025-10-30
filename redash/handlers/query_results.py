@@ -200,8 +200,45 @@ class QueryResultDropdownResource(BaseResource):
         except QueryDetachedFromDataSourceError as e:
             abort(400, message=str(e))
 
+class DependentQueryResultDropdownResource(BaseResource):
+    def get(self, query_id, parameters):
+        import json, urllib.parse
+        from redash.models import Widget
 
-class QueryDropdownsResource(BaseResource):
+        # Step 1: Decode the URL-encoded string
+        try:
+            decoded_str = urllib.parse.unquote(parameters)
+        except Exception:
+            decoded_str = parameters
+
+        # Step 2: Parse JSON string into Python dict
+        try:
+            parsed_params = json.loads(decoded_str)
+        except json.JSONDecodeError:
+            parsed_params = {}
+
+        # Step 3: Get Query object
+        query = get_object_or_404(models.Query.get_by_id_and_org, query_id, self.current_org)
+
+        # Step 4: Allow access for public dashboards (ApiUser)
+        if isinstance(current_user, models.ApiUser):
+            widget = (
+                models.db.session.query(Widget)
+                .filter(Widget.visualization_query_id == query.id)
+                .first()
+            )
+            if not widget:
+                abort(403, message="Query not part of a public dashboard")
+            result = dropdown_values(query_id, self.current_org, parameters=parsed_params)
+            return result
+
+        # Step 5: Authenticated users must have normal access
+        require_access(query.data_source, current_user, view_only)
+        result = dropdown_values(query_id, self.current_org, parameters=parsed_params)
+        return result
+
+
+class QueryDropdownsResource(BaseResource): 
     def get(self, query_id, dropdown_query_id):
         query = get_object_or_404(models.Query.get_by_id_and_org, query_id, self.current_org)
         require_access(query, current_user, view_only)
@@ -213,6 +250,74 @@ class QueryDropdownsResource(BaseResource):
 
         return dropdown_values(dropdown_query_id, self.current_org)
 
+
+class dependentQueryDropdownsResource(BaseResource):
+    def get(self, query_id, dropdown_query_id, parameters):
+        import json, urllib.parse, traceback
+        from redash.models import Widget, Visualization, Dashboard
+
+        try:
+            # Step 1: Decode parameters
+            try:
+                decoded_str = urllib.parse.unquote(parameters)
+            except Exception:
+                decoded_str = parameters
+
+            # Step 2: Parse JSON into dict
+            try:
+                parsed_params = json.loads(decoded_str)
+            except json.JSONDecodeError:
+                parsed_params = {}
+
+            # Step 3: Fetch the main query object
+            query = get_object_or_404(models.Query.get_by_id_and_org, query_id, self.current_org)
+
+            # Step 4: Access control for main query
+            if isinstance(current_user, models.ApiUser):
+                widget = (
+                    models.db.session.query(Widget)
+                    .join(Visualization, Widget.visualization_id == Visualization.id)
+                    .join(Dashboard, Widget.dashboard_id == Dashboard.id)
+                    .filter(
+                        Visualization.query_id == query.id,
+                        Dashboard.is_draft.is_(False),
+                        Dashboard.is_archived.is_(False),
+                        Dashboard.org_id == self.current_org.id
+                    )
+                    .first()
+                )
+
+                if not widget:
+                    abort(403, message="Query not part of a public dashboard")
+
+            else:
+                require_access(query, current_user, view_only)
+
+            # Step 5: Checking related dropdown queries
+
+            # Extract related query ids from query.options parameters
+            related_queries_ids = []
+            try:
+                opts = query.options or {}
+                params_list = opts.get("parameters", [])
+                for p in params_list:
+                    if p.get("type") == "query" and p.get("queryId") is not None:
+                        related_queries_ids.append(int(p["queryId"]))
+            except Exception:
+                pass
+
+            if int(dropdown_query_id) not in related_queries_ids:
+                dropdown_query = get_object_or_404(models.Query.get_by_id_and_org, dropdown_query_id, self.current_org)
+
+                if not isinstance(current_user, models.ApiUser):
+                    require_access(dropdown_query.data_source, current_user, view_only)
+
+            # Step 6: Execute dropdown_values
+            result = dropdown_values(dropdown_query_id, self.current_org, parsed_params)
+            return result
+
+        except Exception as e:
+            abort(500, message=str(e))
 
 class QueryResultResource(BaseResource):
     @staticmethod
