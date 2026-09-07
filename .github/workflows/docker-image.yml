@@ -32,8 +32,15 @@ jobs:
       - name: Build & Push Analytics Image
         run: |
           docker buildx build \
-            --platform linux/amd64 \
-            -t $REGISTRY/$IMAGE_NAME:latest \
+          # Old build
+            # --platform linux/amd64 \
+            # -t $REGISTRY/$IMAGE_NAME:latest \
+            # -f Dockerfile \
+            # . \
+            # --push
+          # New build
+           --platform linux/arm64 \
+            -t $REGISTRY/$IMAGE_NAME:arm64  \
             -f Dockerfile \
             . \
             --push
