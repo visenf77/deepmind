@@ -121,6 +121,9 @@
 
 # syntax=docker/dockerfile:1
 
+# ==========================================
+# Frontend Builder
+# ==========================================
 FROM --platform=$BUILDPLATFORM node:18-bookworm AS frontend-builder
 
 RUN npm install --global --force yarn@1.22.22
@@ -161,7 +164,9 @@ RUN if [ "x$skip_frontend_build" = "x" ]; then \
     fi
 
 
-# Final ARM64 image
+# ==========================================
+# ARM64 Backend
+# ==========================================
 FROM python:3.10-slim-bookworm
 
 EXPOSE 5000
@@ -174,13 +179,17 @@ RUN apt-get update && \
     curl \
     gnupg \
     build-essential \
+    gcc \
+    g++ \
+    cmake \
+    make \
+    python3-dev \
     pwgen \
     libffi-dev \
     sudo \
     git-core \
     libkrb5-dev \
     libpq-dev \
-    g++ \
     unixodbc-dev \
     xmlsec1 \
     libssl-dev \
@@ -188,15 +197,9 @@ RUN apt-get update && \
     freetds-dev \
     libsasl2-dev \
     unzip \
-    libsasl2-modules-gssapi-mit && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-ARG TARGETPLATFORM
-
-RUN if [ "$TARGETPLATFORM" = "linux/amd64" ]; then \
-      echo "Installing AMD64-only drivers"; \
-    fi
+    libsasl2-modules-gssapi-mit \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -206,20 +209,25 @@ ENV POETRY_VIRTUALENVS_CREATE=false
 
 RUN curl -sSL https://install.python-poetry.org | python3 -
 
+RUN pip install --no-cache-dir --upgrade \
+    pip \
+    setuptools \
+    wheel
+
 COPY pyproject.toml poetry.lock ./
 
-ARG POETRY_OPTIONS="--no-root --no-interaction --no-ansi"
-
-# Production: remove dev dependencies
 ARG install_groups="main,all_ds"
+
+# Important: install sequentially to identify ARM64 failures
+ENV POETRY_INSTALLER_PARALLEL=false
+ENV POETRY_INSTALLER_MAX_WORKERS=1
 
 RUN /etc/poetry/bin/poetry install \
     --only $install_groups \
-    $POETRY_OPTIONS \
-    -vvv > /tmp/poetry-install.log 2>&1 || \
-    (echo "========== POETRY ERROR ==========" && \
-     tail -n 300 /tmp/poetry-install.log && \
-     exit 1)
+    --no-root \
+    --no-interaction \
+    --no-ansi \
+    -vvv
 
 COPY --chown=redash . /app
 
