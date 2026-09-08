@@ -215,7 +215,11 @@ ARG install_groups="main,all_ds"
 
 RUN /etc/poetry/bin/poetry install \
     --only $install_groups \
-    $POETRY_OPTIONS
+    $POETRY_OPTIONS \
+    -vvv > /tmp/poetry-install.log 2>&1 || \
+    (echo "========== POETRY ERROR ==========" && \
+     tail -n 300 /tmp/poetry-install.log && \
+     exit 1)
 
 COPY --chown=redash . /app
 
