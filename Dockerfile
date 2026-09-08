@@ -122,8 +122,9 @@
 # syntax=docker/dockerfile:1
 
 # ============================================================
-# STAGE 1: FRONTEND
+# STAGE 1: FRONTEND BUILDER
 # ============================================================
+
 FROM --platform=$BUILDPLATFORM node:18-bookworm AS frontend-builder
 
 RUN npm install --global --force yarn@1.22.22
@@ -140,7 +141,6 @@ USER redash
 WORKDIR /frontend
 
 COPY --chown=redash package.json yarn.lock .yarnrc ./
-
 COPY --chown=redash viz-lib ./viz-lib
 COPY --chown=redash scripts ./scripts
 
@@ -160,17 +160,18 @@ RUN if [ "x$skip_frontend_build" = "x" ]; then \
       yarn build; \
     else \
       mkdir -p /frontend/client/dist && \
-      touch /frontend/client/dist/index.html && \
-      touch /frontend/client/dist/multi_org.html; \
+      touch /frontend/client/dist/multi_org.html && \
+      touch /frontend/client/dist/index.html; \
     fi
 
 
 # ============================================================
 # STAGE 2: PYTHON BASE
 # ============================================================
+
 FROM python:3.10-slim-bookworm AS python-base
 
-WORKDIR /app
+EXPOSE 5000
 
 RUN useradd --create-home redash
 
@@ -198,6 +199,8 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
+WORKDIR /app
+
 ENV POETRY_VERSION=1.8.3
 ENV POETRY_HOME=/etc/poetry
 ENV POETRY_VIRTUALENVS_CREATE=false
@@ -210,36 +213,30 @@ RUN /etc/poetry/bin/poetry --version
 # ============================================================
 # STAGE 3: PYTHON DEPENDENCIES
 # ============================================================
+
 FROM python-base AS python-dependencies
 
 COPY pyproject.toml poetry.lock ./
 
+ARG POETRY_OPTIONS="--no-root --no-interaction --no-ansi"
+
 ARG install_groups="main,all_ds"
 
-# Disable parallel installation so we can identify
-# exactly which package fails
-RUN /etc/poetry/bin/poetry config installer.max-workers 1
-
-RUN echo "========================================" && \
-    echo "Installing Python dependencies" && \
-    echo "Architecture:" && \
-    uname -m && \
-    echo "========================================"
-
+# Install dependencies and print detailed error
 RUN /etc/poetry/bin/poetry install \
     --only $install_groups \
-    --no-root \
-    --no-interaction \
-    --no-ansi \
-    -vvv
+    $POETRY_OPTIONS \
+    -vvv \
+    2>&1 || exit 1
 
 
 # ============================================================
-# STAGE 4: FINAL RUNTIME IMAGE
+# STAGE 4: FINAL IMAGE
 # ============================================================
-FROM python-dependencies AS runtime
 
-EXPOSE 5000
+FROM python-dependencies AS production
+
+WORKDIR /app
 
 COPY --chown=redash . /app
 
