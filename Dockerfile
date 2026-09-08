@@ -222,12 +222,9 @@ ARG POETRY_OPTIONS="--no-root --no-interaction --no-ansi"
 
 ARG install_groups="main,all_ds"
 
-# Install dependencies and print detailed error
 RUN /etc/poetry/bin/poetry install \
     --only $install_groups \
-    $POETRY_OPTIONS \
-    -vvv \
-    2>&1 || exit 1
+    $POETRY_OPTIONS
 
 
 # ============================================================
