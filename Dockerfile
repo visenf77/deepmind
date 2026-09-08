@@ -121,9 +121,9 @@
 
 # syntax=docker/dockerfile:1
 
-# ==========================================
-# Frontend Builder
-# ==========================================
+# ============================================================
+# STAGE 1: FRONTEND
+# ============================================================
 FROM --platform=$BUILDPLATFORM node:18-bookworm AS frontend-builder
 
 RUN npm install --global --force yarn@1.22.22
@@ -140,6 +140,7 @@ USER redash
 WORKDIR /frontend
 
 COPY --chown=redash package.json yarn.lock .yarnrc ./
+
 COPY --chown=redash viz-lib ./viz-lib
 COPY --chown=redash scripts ./scripts
 
@@ -159,17 +160,17 @@ RUN if [ "x$skip_frontend_build" = "x" ]; then \
       yarn build; \
     else \
       mkdir -p /frontend/client/dist && \
-      touch /frontend/client/dist/multi_org.html && \
-      touch /frontend/client/dist/index.html; \
+      touch /frontend/client/dist/index.html && \
+      touch /frontend/client/dist/multi_org.html; \
     fi
 
 
-# ==========================================
-# ARM64 Backend
-# ==========================================
-FROM python:3.10-slim-bookworm
+# ============================================================
+# STAGE 2: PYTHON BASE
+# ============================================================
+FROM python:3.10-slim-bookworm AS python-base
 
-EXPOSE 5000
+WORKDIR /app
 
 RUN useradd --create-home redash
 
@@ -179,17 +180,13 @@ RUN apt-get update && \
     curl \
     gnupg \
     build-essential \
-    gcc \
-    g++ \
-    cmake \
-    make \
-    python3-dev \
     pwgen \
     libffi-dev \
     sudo \
     git-core \
     libkrb5-dev \
     libpq-dev \
+    g++ \
     unixodbc-dev \
     xmlsec1 \
     libssl-dev \
@@ -197,11 +194,9 @@ RUN apt-get update && \
     freetds-dev \
     libsasl2-dev \
     unzip \
-    libsasl2-modules-gssapi-mit \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-WORKDIR /app
+    libsasl2-modules-gssapi-mit && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 ENV POETRY_VERSION=1.8.3
 ENV POETRY_HOME=/etc/poetry
@@ -209,18 +204,27 @@ ENV POETRY_VIRTUALENVS_CREATE=false
 
 RUN curl -sSL https://install.python-poetry.org | python3 -
 
-RUN pip install --no-cache-dir --upgrade \
-    pip \
-    setuptools \
-    wheel
+RUN /etc/poetry/bin/poetry --version
+
+
+# ============================================================
+# STAGE 3: PYTHON DEPENDENCIES
+# ============================================================
+FROM python-base AS python-dependencies
 
 COPY pyproject.toml poetry.lock ./
 
 ARG install_groups="main,all_ds"
 
-# Important: install sequentially to identify ARM64 failures
-ENV POETRY_INSTALLER_PARALLEL=false
-ENV POETRY_INSTALLER_MAX_WORKERS=1
+# Disable parallel installation so we can identify
+# exactly which package fails
+RUN /etc/poetry/bin/poetry config installer.max-workers 1
+
+RUN echo "========================================" && \
+    echo "Installing Python dependencies" && \
+    echo "Architecture:" && \
+    uname -m && \
+    echo "========================================"
 
 RUN /etc/poetry/bin/poetry install \
     --only $install_groups \
@@ -228,6 +232,14 @@ RUN /etc/poetry/bin/poetry install \
     --no-interaction \
     --no-ansi \
     -vvv
+
+
+# ============================================================
+# STAGE 4: FINAL RUNTIME IMAGE
+# ============================================================
+FROM python-dependencies AS runtime
+
+EXPOSE 5000
 
 COPY --chown=redash . /app
 
