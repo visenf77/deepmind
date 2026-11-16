@@ -1,137 +1,213 @@
-# name: Docker Image CI
+
+name: Build and Upload Redash ARM64 Image to S3
 
 on:
   push:
-    branches: [ "master" ]
-  pull_request:
-    branches: [ "master" ]
+    branches:
+      - master
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
 
 env:
-  REGISTRY: hrcosmo.azurecr.io
+  AWS_REGION: ap-south-1
+  S3_BUCKET: cg-tele-folder-parm
+
+  # Docker image configuration
   IMAGE_NAME: hrcosmo-analytics
+  IMAGE_TAG: aws-arm64
+
+  # S3 configuration
+  S3_IMAGE_PATH: ec2-docker-image
+  OLD_IMAGE_PATH: ec2-docker-image/old-image
 
 jobs:
-  build-backend:
-    runs-on: ubuntu-latest
+  build-and-upload:
+    name: Build and Upload Redash ARM64
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
 
     steps:
+
+      # ==========================================
+      # CHECKOUT
+      # ==========================================
+
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Azure Login
-        uses: azure/login@v1
+      # ==========================================
+      # VERIFY AWS ROLE
+      # ==========================================
+
+      - name: Verify AWS Role Configuration
+        env:
+          ROLE_ARN: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$ROLE_ARN" ]; then
+            echo "ERROR: AWS_ROLE_TO_ASSUME is empty"
+            exit 1
+          fi
+
+          echo "AWS role configuration found."
+          printf '%s' "$ROLE_ARN" | sha256sum
+
+      # ==========================================
+      # AWS LOGIN USING OIDC
+      # ==========================================
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v6
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Docker Login to ACR
-        run: echo ${{ secrets.ACR_PASSWORD }} | docker login ${{ env.REGISTRY }} -u ${{ secrets.ACR_USERNAME }} --password-stdin
+      # ==========================================
+      # VERIFY AWS IDENTITY
+      # ==========================================
+
+      - name: Verify AWS Identity
+        run: |
+          aws sts get-caller-identity
+
+      # ==========================================
+      # SETUP DOCKER BUILDX
+      # ==========================================
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build & Push Analytics Image
+      # ==========================================
+      # BUILD ARM64 DOCKER IMAGE
+      # ==========================================
+
+      - name: Build ARM64 Docker Image
         run: |
+          set -euo pipefail
+
           docker buildx build \
-            --platform linux/amd64 \
-            -t $REGISTRY/$IMAGE_NAME:latest \
+            --progress=plain \
+            --platform linux/arm64 \
+            --target production \
+            --tag "${IMAGE_NAME}:${IMAGE_TAG}" \
+            --tag "${IMAGE_NAME}:latest" \
+            --cache-from type=gha,scope=redash-arm64 \
+            --cache-to type=gha,scope=redash-arm64,mode=max \
+            --output "type=docker,dest=/tmp/${IMAGE_NAME}-arm64.tar" \
             -f Dockerfile \
-            . \
-            --push         
+            .
 
-# name: Build and Push Redash ARM64
+      # ==========================================
+      # VERIFY DOCKER IMAGE
+      # ==========================================
 
-# on:
-#   push:
-#     branches:
-#       - master
+      - name: Verify Docker Image
+        run: |
+          set -euo pipefail
 
-#   workflow_dispatch:
+          IMAGE_TAR="/tmp/${IMAGE_NAME}-arm64.tar"
 
-# env:
-#   REGISTRY: hrcosmo.azurecr.io
-#   IMAGE_NAME: hrcosmo-analytics
+          if [ ! -s "$IMAGE_TAR" ]; then
+            echo "ERROR: Docker image TAR was not generated!"
+            exit 1
+          fi
 
-# jobs:
-#   build-and-push:
-#     name: Build and Push ARM64 Image
+          ls -lh "$IMAGE_TAR"
 
-#     runs-on: ubuntu-latest
+          docker load -i "$IMAGE_TAR"
 
-#     permissions:
-#       contents: read
+          ARCH=$(docker image inspect \
+            "${IMAGE_NAME}:${IMAGE_TAG}" \
+            --format '{{.Os}}/{{.Architecture}}')
 
-#     steps:
+          echo "Image architecture: ${ARCH}"
 
-#       # ==========================================================
-#       # CHECKOUT
-#       # ==========================================================
+          if [ "$ARCH" != "linux/arm64" ]; then
+            echo "ERROR: Incorrect Docker image architecture!"
+            exit 1
+          fi
 
-#       - name: Checkout Code
-#         uses: actions/checkout@v4
+          echo "Docker image verified successfully."
 
+      # ==========================================
+      # ARCHIVE PREVIOUS IMAGE
+      # ==========================================
 
-#       # ==========================================================
-#       # AZURE LOGIN
-#       # ==========================================================
+      - name: Archive Previous Image to old-image
+        run: |
+          set -euo pipefail
 
-#       - name: Azure Login
-#         uses: azure/login@v2
-#         with:
-#           creds: ${{ secrets.AZURE_CREDENTIALS }}
+          IMAGE_FILE="${IMAGE_NAME}-arm64.tar"
+          SOURCE_KEY="${S3_IMAGE_PATH}/${IMAGE_FILE}"
 
+          if aws s3api head-object \
+            --bucket "$S3_BUCKET" \
+            --key "$SOURCE_KEY" \
+            >/dev/null 2>&1
+          then
 
-#       # ==========================================================
-#       # LOGIN TO ACR
-#       # ==========================================================
+            TIMESTAMP=$(date -u +%Y%m%d-%H%M%S)
 
-#       - name: Docker Login to Azure Container Registry
-#         run: |
-#           echo "${{ secrets.ACR_PASSWORD }}" | \
-#           docker login "${{ env.REGISTRY }}" \
-#             --username "${{ secrets.ACR_USERNAME }}" \
-#             --password-stdin
+            OLD_FILE="${IMAGE_NAME}-arm64-${TIMESTAMP}.tar"
 
+            echo "Previous image found."
+            echo "Moving previous image to old-image folder..."
 
-#       # ==========================================================
-#       # SETUP QEMU FOR ARM64
-#       # ==========================================================
+            aws s3 mv \
+              "s3://${S3_BUCKET}/${SOURCE_KEY}" \
+              "s3://${S3_BUCKET}/${OLD_IMAGE_PATH}/${OLD_FILE}" \
+              --only-show-errors
 
-#       - name: Set up QEMU
-#         uses: docker/setup-qemu-action@v3
-#         with:
-#           platforms: arm64
+            echo "Previous image archived: ${OLD_FILE}"
 
+          else
 
-#       # ==========================================================
-#       # SETUP BUILDX
-#       # ==========================================================
+            echo "No previous image found. Skipping archive."
 
-#       - name: Set up Docker Buildx
-#         uses: docker/setup-buildx-action@v3
+          fi
 
+      # ==========================================
+      # UPLOAD NEW IMAGE TO S3
+      # ==========================================
 
-#       # ==========================================================
-#       # BUILD AND PUSH ARM64 IMAGE
-#       # ==========================================================
+      - name: Upload Docker Image to S3
+        run: |
+          set -euo pipefail
 
-#       - name: Build and Push ARM64 Image
-#         uses: docker/build-push-action@v6
+          aws s3 cp \
+            "/tmp/${IMAGE_NAME}-arm64.tar" \
+            "s3://${S3_BUCKET}/${S3_IMAGE_PATH}/${IMAGE_NAME}-arm64.tar" \
+            --only-show-errors
 
-#         with:
-#           context: .
-#           file: ./Dockerfile
+          echo "Docker image uploaded successfully."
 
-#           platforms: linux/arm64
+      # ==========================================
+      # VERIFY S3 UPLOAD
+      # ==========================================
 
-#           push: true
+      - name: Verify S3 Upload
+        run: |
+          set -euo pipefail
 
-#           target: production
+          aws s3api head-object \
+            --bucket "${S3_BUCKET}" \
+            --key "${S3_IMAGE_PATH}/${IMAGE_NAME}-arm64.tar" \
+            --query '{ContentLength:ContentLength,LastModified:LastModified}' \
+            --output table
 
-#           tags: |
-#             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:arm64
-#             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          echo ""
+          echo "SUCCESS: Redash ARM64 Docker image uploaded."
 
-#           cache-from: type=gha
-#           cache-to: type=gha,mode=max
+          echo "Current image:"
+          aws s3 ls \
+            "s3://${S3_BUCKET}/${S3_IMAGE_PATH}/${IMAGE_NAME}-arm64.tar"
 
-#           provenance: false
+          echo ""
+          echo "Archived images:"
+          aws s3 ls \
+            "s3://${S3_BUCKET}/${OLD_IMAGE_PATH}/"

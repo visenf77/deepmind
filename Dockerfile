@@ -39,7 +39,7 @@ EOF
 
 FROM python:3.10-slim-bookworm
 
-EXPOSE 5000
+EXPOSE 5558
 
 RUN useradd --create-home redash
 
